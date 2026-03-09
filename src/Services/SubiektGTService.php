@@ -4,8 +4,8 @@ namespace Aliaswpeu\SferaApi\Services;
 
 use COM;
 use AsocialMedia\Sfera\GT;
-use Illuminate\Support\Arr;
 use AsocialMedia\Sfera\Program;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Aliaswpeu\SferaApi\DTOs\TowarDTO;
 use Aliaswpeu\SferaApi\DTOs\PozycjaDTO;
@@ -17,10 +17,24 @@ class SubiektGTService
     protected Program $program;
 
     protected array $config;
+    protected array $databaseConnection;
+    protected string $instatnce;
 
     public function __construct(string $instance)
     {
+        $this->instatnce = $instance;
         $this->config = config("sfera-api.$instance");
+
+        config([
+            "database.connections.$instance" => [
+                'driver' => 'sqlsrv',
+                'host' => $this->config['sfera_server'],
+                'database' => $this->config['sfera_database'],
+                'username' => $this->config['sfera_db_user'],
+                'password' => $this->config['sfera_db_password'],
+            ]
+        ]);
+
 
         if (!$this->config) {
             throw new \Exception("Invalid Sfera instance: $instance");
@@ -133,57 +147,7 @@ class SubiektGTService
         }
     }
 
-    /**
-     * Creates a new product (towar) in Subiekt GT.
-     */
 
-    public function createTowar(TowarDTO $dto): array
-    {
-        Log::info('Sfera: Creating Towar DTO', $dto->toArray());
-
-        try {
-            // Correct API for AsocialMedia\Sfera
-            $Otw = $this->program->TowaryManager->DodajTowar();
-
-            // Set simple properties
-            foreach ($dto->toArray() as $prop => $value) {
-                if ($value !== null && !in_array($prop, ['PrimaryEan', 'AdditionalEans'])) {
-                    $Otw->$prop = $value;
-                }
-            }
-
-            // Primary EAN
-            if ($dto->PrimaryEan) {
-                $Otw->KodyKreskowe->Podstawowy = $dto->PrimaryEan;
-            }
-
-            // Additional EANs
-            foreach ($dto->AdditionalEans as $ean) {
-                $Otw->KodyKreskowe->Dodaj($ean);
-            }
-
-            $Otw->Zapisz();
-
-            return ['tw_Id' => $Otw->Identyfikator()];
-
-        } catch (\com_exception $e) {
-            Log::error('Sfera COM exception when creating Towar', [
-                'message' => $e->getMessage(),
-                'code' => $e->getCode(),
-                'dto' => $dto->toArray(),
-            ]);
-
-            return ['error' => $e->getMessage()];
-
-        } catch (\Throwable $e) {
-            Log::error('Sfera PHP exception when creating Towar', [
-                'message' => $e->getMessage(),
-                'dto' => $dto->toArray(),
-            ]);
-
-            return ['error' => $e->getMessage()];
-        }
-    }
 
     public function createDokument(DokumentDTO $dto): array
     {
@@ -265,6 +229,59 @@ class SubiektGTService
 
         return $Okh;
     }
+
+
+    /**
+     * Creates a new product (towar) in Subiekt GT.
+     */
+
+    public function createTowar(TowarDTO $dto): array
+    {
+        Log::info('Sfera: Creating Towar DTO', $dto->toArray());
+
+        try {
+            // Correct API for AsocialMedia\Sfera
+            $Otw = $this->program->TowaryManager->DodajTowar();
+
+            // Set simple properties
+            foreach ($dto->toArray() as $prop => $value) {
+                if ($value !== null && !in_array($prop, ['PrimaryEan', 'AdditionalEans'])) {
+                    $Otw->$prop = $value;
+                }
+            }
+
+            // Primary EAN
+            if ($dto->PrimaryEan) {
+                $Otw->KodyKreskowe->Podstawowy = $dto->PrimaryEan;
+            }
+
+            // Additional EANs
+            foreach ($dto->AdditionalEans as $ean) {
+                $Otw->KodyKreskowe->Dodaj($ean);
+            }
+
+            $Otw->Zapisz();
+
+            return ['tw_Id' => $Otw->Identyfikator()];
+
+        } catch (\com_exception $e) {
+            Log::error('Sfera COM exception when creating Towar', [
+                'message' => $e->getMessage(),
+                'code' => $e->getCode(),
+                'dto' => $dto->toArray(),
+            ]);
+
+            return ['error' => $e->getMessage()];
+
+        } catch (\Throwable $e) {
+            Log::error('Sfera PHP exception when creating Towar', [
+                'message' => $e->getMessage(),
+                'dto' => $dto->toArray(),
+            ]);
+
+            return ['error' => $e->getMessage()];
+        }
+    }
     private function createOrLoadTowar(TowarDTO $dto)
     {
         $mgr = $this->program->TowaryManager;
@@ -293,23 +310,80 @@ class SubiektGTService
 
         return $Otw;
     }
-    private function addDocumentItem($Dok, PozycjaDTO $dto)
+
+
+    private function findTowar(?int $twId, ?string $symbol, ?string $ean)
     {
-        // If full TowarDTO provided → create or load
-        if ($dto->Towar instanceof TowarDTO) {
-            $towar = $this->createOrLoadTowar($dto->Towar);
-            $symbol = $towar->Symbol;
-        } else {
-            $symbol = $dto->Symbol;
+        // 1. Search by TwId
+        if ($twId) {
+            return DB::connection($this->instatnce)
+                ->table('Tw__Towar')
+                ->where('tw_Id', $twId)
+                ->first();
         }
 
+        // Build search term
+        $search = trim($symbol ?? $ean ?? '');
+        if ($search === '') {
+            return null;
+        }
+        return DB::connection($this->instatnce)
+            ->table('tw__Towar')
+            ->where('tw_Symbol', $search)                // exact symbol
+            ->orWhere('tw_PodstKodKresk', $search)       // exact EAN
+            ->orWhereIn('tw_Id', function ($q) use ($search) {
+                $q->select('kk_IdTowar')
+                    ->from('tw_KodKreskowy')
+                    ->where('kk_Kod', $search);
+            })
+            ->first();
+    }
+    private function addDocumentItem($Dok, PozycjaDTO $dto)
+    {
+        // 1. CASE: Full TowarDTO provided → create or load
+        if ($dto->Towar instanceof TowarDTO) {
+            $towar = $this->createOrLoadTowar($dto->Towar);
+            return $this->addTowarPosition($Dok, $dto, $towar->Symbol);
+        }
+
+        // 2. CASE: Search by TwId, Symbol or Ean
+        $towar = $this->findTowar(
+            twId: $dto->TwId,
+            symbol: $dto->Symbol,
+            ean: $dto->Ean
+        );
+
+        if ($towar) {
+            return $this->addTowarPosition($Dok, $dto, $towar->tw_Symbol);
+        }
+
+        // 3. CASE: No match → create one-time service
+        return $this->addServicePosition($Dok, $dto);
+    }
+    private function addServicePosition($Dok, PozycjaDTO $dto)
+    {
+        $pos = $Dok->Pozycje->DodajUslugeJednorazowa();
+
+        $pos->UslJednNazwa = $dto->Opis
+            ?? $dto->Symbol
+            ?? $dto->Ean
+            ?? 'Usługa jednorazowa';
+
+        $pos->Opis = $dto->Opis ?? '';
+        $pos->IloscJm = $dto->Qty;
+        $pos->Jm = $dto->Jm ?? 'szt.';
+        $pos->CenaNettoPrzedRabatem = $dto->Price;
+
+        return $pos;
+    }
+
+    private function addTowarPosition($Dok, PozycjaDTO $dto, string $symbol)
+    {
         $pos = $Dok->Pozycje->Dodaj($symbol);
-        // dd($pos->TowarId);
-        // Required
+
         $pos->IloscJm = $dto->Qty;
         $pos->WartoscBruttoPoRabacie = $dto->Qty * $dto->Price;
 
-        // Optional
         if ($dto->PriceBeforeDiscount !== null) {
             $pos->WartoscBruttoPrzedRabatem = $dto->Qty * $dto->PriceBeforeDiscount;
         }
@@ -318,12 +392,12 @@ class SubiektGTService
             $pos->Opis = $dto->Opis;
         if ($dto->Jm)
             $pos->Jm = $dto->Jm;
-        if ($dto->VatId)
-            $pos->VatId = $dto->VatId;
+        if ($dto->VatId !== null)
+            $pos->VatId = intval($dto->VatId);
         if ($dto->RabatProcent !== null)
             $pos->RabatProcent = $dto->RabatProcent;
-        if ($dto->MagazynId)
-            $pos->MagazynId = $dto->MagazynId;
+        if ($dto->MagazynId !== null)
+            $pos->MagazynId = intval($dto->MagazynId);
         if ($dto->OznaczenieJpkVat)
             $pos->OznaczenieJpkVat = $dto->OznaczenieJpkVat;
         if ($dto->PodlegaAkcyzie !== null)
@@ -335,6 +409,8 @@ class SubiektGTService
 
         return $pos;
     }
+
+
     private function mapHeader($Dok, DokumentDTO $dto)
     {
         $Dok->Tytul = $dto->Tytul ?? '';

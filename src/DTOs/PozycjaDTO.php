@@ -9,8 +9,11 @@ class PozycjaDTO
     public float $Qty,
     public float $Price,
 
-    // Either Symbol OR TowarDTO
+    // Either Symbol|TwID|Ean OR TowarDTO
     public ?string $Symbol = null,
+    public ?int $TwId = null,
+    public ?string $Ean = null,
+
     public ?TowarDTO $Towar = null,
 
     // Optional
@@ -30,8 +33,11 @@ class PozycjaDTO
     public static function rules(): array
     {
         return [
-            // Either Symbol or Towar must be provided
+            // Either Symbol|TwID|Ean or Towar must be provided
             'Symbol' => ['nullable', 'string'],
+            'TwId' => ['nullable', 'integer'],
+            'Ean' => ['nullable', 'string'],
+            
             'Towar' => ['nullable', 'array'],
 
             'Qty' => ['required', 'numeric', 'min:0.0001'],
@@ -60,6 +66,8 @@ class PozycjaDTO
         Qty: $data['Qty'],
         Price: $data['Price'],
         Symbol: $data['Symbol'] ?? null,
+        TwId: $data['TwId'] ?? null,
+        Ean: $data['Ean'] ?? null,
         Towar: $data['Towar'] ?? null,
         PriceBeforeDiscount: $data['PriceBeforeDiscount'] ?? null,
         Opis: $data['Opis'] ?? null,
