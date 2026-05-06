@@ -2,15 +2,16 @@
 
 namespace Aliaswpeu\SferaApi\Services;
 
-use COM;
-use AsocialMedia\Sfera\GT;
-use AsocialMedia\Sfera\Program;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Aliaswpeu\SferaApi\DTOs\TowarDTO;
-use Aliaswpeu\SferaApi\DTOs\PozycjaDTO;
 use Aliaswpeu\SferaApi\DTOs\DokumentDTO;
 use Aliaswpeu\SferaApi\DTOs\KontrahentDTO;
+use Aliaswpeu\SferaApi\DTOs\PozycjaDTO;
+use Aliaswpeu\SferaApi\DTOs\TowarDTO;
+use AsocialMedia\Sfera\GT;
+use AsocialMedia\Sfera\Program;
+use COM;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class SubiektGTService
 {
@@ -42,6 +43,8 @@ class SubiektGTService
 
         $this->initializeGT();
     }
+
+
 
     /**
      * Initialize COM object for Subiekt GT
@@ -76,7 +79,7 @@ class SubiektGTService
     # --------------------------------------------------------- 
     # KONTRAHENT 
     # --------------------------------------------------------- 
-    public function createKontrahent(KontrahentDTO $dto): array
+    public function createKontrahent2(KontrahentDTO $dto): array
     {
         Log::info('Sfera: Creating Kontrahent DTO', $dto->toArray());
         try {
@@ -117,10 +120,32 @@ class SubiektGTService
             if (in_array($prop, ['AdresDostawy', 'AdresKorespondencyjny'])) {
                 continue;
             }
-            if ($value !== null) {
+            if ($prop === 'Panstwo') {
+                $value = $this->countryCodeToId($value);
+            }
+            if (
+                $value !== null
+                /*  && $prop !== 'NIP'
+                 && $prop !== 'Miejscowosc'
+                 && $prop !== 'KodPocztowy'
+                 && $prop !== 'Ulica'
+                 && $prop !== 'Nazwa'
+                 && $prop !== 'Email'
+                 && $prop !== 'Symbol' */
+            ) {
+
+                Log::info("Sfera: Mapping basic field for Kontrahent", ['property' => $prop, 'value' => $value]);
                 $Okh->$prop = $value;
             }
         }
+
+        /*     $Okh->Symbol = 'Test' . rand(1, 10000);
+            $Okh->Nazwa = 'Test' . rand(1, 10000);
+            $Okh->Nip = '1234567890';
+            $Okh->Email = 'test@example.com';
+            $Okh->Ulica = 'ulica testowa';
+            $Okh->KodPocztowy = '42-200';
+            $Okh->Miejscowosc = 'Częstochowa'; */
     }
     private function mapDeliveryAddress($Okh, KontrahentDTO $dto): void
     {
@@ -129,10 +154,18 @@ class SubiektGTService
         }
         $Okh->AdresDostawy = true;
         foreach ($dto->AdresDostawy as $key => $value) {
+            if ($key === 'Panstwo') {
+                $value = $this->countryCodeToId($value);
+            }
             if ($value !== null) {
                 $Okh->{"AdrDost{$key}"} = $value;
+                Log::info("Sfera: Mapping delivery address field for Kontrahent", ['property' => "AdrDost{$key}", 'value' => $value]);
             }
         }
+        /*   $Okh->AdrDostKodPocztowy = '42-200';
+          $Okh->AdrDostNazwa = 'Testowa 1';
+          $Okh->AdrDostUlica = 'Testowa';
+          $Okh->AdrDostMiejscowosc = 'Częstochowa'; */
     }
     private function mapCrmAddress($Okh, KontrahentDTO $dto): void
     {
@@ -141,6 +174,9 @@ class SubiektGTService
         }
         $Okh->CrmAdresKorespondencyjny = true;
         foreach ($dto->AdresKorespondencyjny as $key => $value) {
+            if ($key === 'Panstwo') {
+                $value = $this->countryCodeToId($value);
+            }
             if ($value !== null) {
                 $Okh->{"Crm{$key}"} = $value;
             }
@@ -156,23 +192,25 @@ class SubiektGTService
         try {
             // 1. Create document by type
             $Dok = $this->createDocumentByType($dto->Typ);
-
+            $Dok->AutoPrzeliczanie = false;
             // 2. Assign customer
             $this->assignCustomer($Dok, $dto);
+            Log::info('Sfera: Customer assigned to document', ['KontrahentId' => $Dok->KontrahentId]);
             // 3. Header fields
             $this->mapHeader($Dok, $dto);
-
+            Log::info('Sfera: Mapped document header fields', ['Typ' => $dto->Typ]);
             // 4. Add items
             foreach ($dto->Pozycje as $poz) {
                 $this->addDocumentItem($Dok, $poz);
+                Log::info('Sfera: Added document item', ['Pozycja' => $poz->toArray()]);
             }
-
             // 5. Payment
             $this->mapPayment($Dok, $dto);
-
+            Log::info('Sfera: Mapped document payment', ['PaymentType' => $dto->PaymentType, 'Amount' => $dto->Amount]);
             // 6. Save
             $Dok->Przelicz();
             $Dok->Zapisz();
+            Log::info('Sfera: Document saved successfully', ['doc_id' => $Dok->Identyfikator()]);
             return [
                 'doc_ref' => $Dok->NumerPelny,
                 'doc_id' => $Dok->Identyfikator(),
@@ -199,15 +237,19 @@ class SubiektGTService
     }
     private function assignCustomer($Dok, DokumentDTO $dto)
     {
+        Log::info('Sfera: Trying to assign customer to document');
         if ($dto->KontrahentId) {
             $Dok->KontrahentId = $dto->KontrahentId;
+            Log::info('Sfera: Assigned existing Kontrahent by ID', ['KontrahentId' => $dto->KontrahentId]);
             return;
         }
 
         if ($dto->Kontrahent) {
-            $kontrahentDto = KontrahentDTO::fromArray($dto->Kontrahent);
+            // $kontrahentDto = KontrahentDTO::fromArray($dto->Kontrahent);
+            $kontrahentDto = $dto->Kontrahent;
             $kontrahent = $this->createOrLoadKontrahent($kontrahentDto);
             $Dok->KontrahentId = $kontrahent->Identyfikator();
+            Log::info('Sfera: Assigned Kontrahent by DTO', ['KontrahentId' => $kontrahent->Identyfikator()]);
             return;
         }
 
@@ -217,17 +259,98 @@ class SubiektGTService
     {
         $mgr = $this->program->KontrahenciManager;
 
-        if ($mgr->Istnieje($dto->Symbol)) {
-            return $mgr->Wczytaj($dto->Symbol);
+
+        $kontrahenci = $this->findKontrahentByAny(
+            nip: $dto->NIP,
+            symbol: $dto->Symbol,
+            email: $dto->Email,
+        );
+        if ($kontrahenci) {
+            Log::info('Sfera: Found existing Kontrahent by NIP/Symbol/Email, loading first match', [
+                'Symbol' => $dto->Symbol,
+                'NIP' => $dto->NIP,
+                'Email' => $dto->Email,
+                'MatchesFound' => count($kontrahenci),
+            ]);
+            Log::debug('Sfera: Found existing Kontrahent', [
+                'Kontrahenci' => $kontrahenci
+            ]);
+            // dd($kontrahenci[0]->kh_Id);
+            return $mgr->Wczytaj((int) $kontrahenci[0]->kh_Id);
         }
 
         $Okh = $mgr->DodajKontrahenta();
         $this->mapBasicFields($Okh, $dto);
+        Log::info('Sfera: Created new Kontrahent, mapping addresses', ['Symbol' => $dto->Symbol]);
         $this->mapDeliveryAddress($Okh, $dto);
+        Log::info('Sfera: Mapped delivery address for Kontrahent', ['Symbol' => $dto->Symbol]);
         $this->mapCrmAddress($Okh, $dto);
+        Log::info('Sfera: Mapped CRM address for Kontrahent', ['Symbol' => $dto->Symbol]);
         $Okh->Zapisz();
 
         return $Okh;
+    }
+
+    public function countryCodeToId(string $code)
+    {
+        return DB::connection($this->instatnce)
+            ->table('sl_Panstwo')
+            ->where('pa_KodPanstwaUE', $code)
+            ->orWhere('pa_KodPanstwaISO', $code)
+            ->value('pa_Id');
+    }
+
+
+
+    public function findKontrahentByAny(?string $nip = null, ?string $symbol = null, ?string $email = null)
+    {
+        $conditions = [];
+        $params = [];
+
+        if ($nip) {
+            $conditions[] = "a.adr_NIP LIKE '%' + :nip + '%'";
+            $params['nip'] = $nip;
+        }
+
+        if ($symbol) {
+            $conditions[] = "k.kh_Symbol LIKE '%' + :symbol + '%'";
+            $params['symbol'] = $symbol;
+        }
+
+        if ($email) {
+            $conditions[] = "k.kh_EMail LIKE '%' + :email + '%'";
+            $params['email'] = $email;
+        }
+
+        if (empty($conditions)) {
+            return [];
+        }
+
+        $where = implode(' OR ', $conditions);
+
+        $sql = "
+    WITH latest_docs AS (
+        SELECT 
+            dok_PlatnikId,
+            MAX(dok_DataWyst) AS last_doc_date
+        FROM dok__Dokument
+        GROUP BY dok_PlatnikId
+    )
+    SELECT 
+        k.kh_Id,
+        ld.last_doc_date
+    FROM kh__Kontrahent k
+    LEFT JOIN adr__Ewid a
+        ON a.adr_IdObiektu = k.kh_Id
+        AND a.adr_TypAdresu IN (1, 2, 11)
+    LEFT JOIN latest_docs ld
+        ON ld.dok_PlatnikId = k.kh_Id
+    WHERE $where
+    GROUP BY k.kh_Id, ld.last_doc_date
+    ORDER BY 
+        CASE WHEN ld.last_doc_date IS NULL THEN 1 ELSE 0 END,
+        ld.last_doc_date DESC";
+        return DB::connection($this->instatnce)->select($sql, $params);
     }
 
 
@@ -352,29 +475,34 @@ class SubiektGTService
             symbol: $dto->Symbol,
             ean: $dto->Ean
         );
-
         if ($towar) {
             return $this->addTowarPosition($Dok, $dto, $towar->tw_Symbol);
         }
-
         // 3. CASE: No match → create one-time service
         return $this->addServicePosition($Dok, $dto);
     }
     private function addServicePosition($Dok, PozycjaDTO $dto)
     {
-        $pos = $Dok->Pozycje->DodajUslugeJednorazowa();
+        try {
+            $pos = $Dok->Pozycje->DodajUslugeJednorazowa();
 
-        $pos->UslJednNazwa = $dto->Opis
-            ?? $dto->Symbol
-            ?? $dto->Ean
-            ?? 'Usługa jednorazowa';
-
-        $pos->Opis = $dto->Opis ?? '';
-        $pos->IloscJm = $dto->Qty;
-        $pos->Jm = $dto->Jm ?? 'szt.';
-        $pos->CenaNettoPrzedRabatem = $dto->Price;
-
-        return $pos;
+            $pos->UslJednNazwa = Str::limit($dto->Opis, 49, '')
+                ?? $dto->Symbol
+                ?? $dto->Ean
+                ?? 'Usługa jednorazowa';
+            $pos->Opis = $dto->Opis ?? '';
+            $pos->IloscJm = $dto->Qty;
+            $pos->Jm = $dto->Jm ?? 'szt.';
+            // $pos->CenaNettoPrzedRabatem = $dto->Price;
+            $pos->CenaBruttoPrzedRabatem = $dto->Price;
+            return $pos;
+        } catch (\Throwable $e) {
+            Log::error('Sfera: Failed to add one-time service position', [
+                'message' => $e->getMessage(),
+                'dto' => $dto->toArray(),
+            ]);
+            throw new \Exception('Failed to add one-time service position: ' . $e->getMessage());
+        }
     }
 
     private function addTowarPosition($Dok, PozycjaDTO $dto, string $symbol)
@@ -382,11 +510,12 @@ class SubiektGTService
         $pos = $Dok->Pozycje->Dodaj($symbol);
 
         $pos->IloscJm = $dto->Qty;
-        $pos->WartoscBruttoPoRabacie = $dto->Qty * $dto->Price;
+        // $pos->WartoscBruttoPoRabacie = $dto->Qty * $dto->Price;
+        $pos->CenaBruttoPrzedRabatem = $dto->Qty * $dto->Price;
 
-        if ($dto->PriceBeforeDiscount !== null) {
-            $pos->WartoscBruttoPrzedRabatem = $dto->Qty * $dto->PriceBeforeDiscount;
-        }
+        /*  if ($dto->PriceBeforeDiscount !== null) {
+             $pos->CenaBruttoPrzedRabatem = $dto->Qty * $dto->PriceBeforeDiscount;
+         } */
 
         if ($dto->Opis)
             $pos->Opis = $dto->Opis;
@@ -413,10 +542,10 @@ class SubiektGTService
 
     private function mapHeader($Dok, DokumentDTO $dto)
     {
-        $Dok->Tytul = $dto->Tytul ?? '';
+        // $Dok->Tytul = $dto->Tytul ?? '';
         $Dok->Uwagi = $dto->Uwagi ?? '';
-        $Dok->NumerOryginalny = $dto->NumerOryginalny ?? '';
-        $Dok->Rezerwacja = $dto->Rezerwacja;
+        // $Dok->NumerOryginalny = $dto->NumerOryginalny ?? '';
+        // $Dok->Rezerwacja = $dto->Rezerwacja;
 
         if ($dto->DataWystawienia)
             $Dok->DataWystawienia = $dto->DataWystawienia;
@@ -452,6 +581,17 @@ class SubiektGTService
                 $Dok->PlatnoscKartaKwota = $amount;
                 $Dok->PlatnoscKartaId = intval($dto->PayPointId);
                 break;
+
+            /* PlatnoscGotowkaKwota Kwota gotówki wpłacana przez klienta. 
+            PlatnoscGotowkaReszta Kwota reszty do wypłacenia klientowi. 
+            PlatnoscKartaId Identyfikator płatności za pomocą karty płatniczej przy sprzedaży. 
+            PlatnoscKartaKwota Kwota płatna kartą płatniczą przy sprzedaży. 
+            PlatnoscKredytId Identyfikator płatności odroczonej (kredytu kupieckiego). 
+            PlatnoscKredytKwota Kwota płatności odroczonej (kwota kredytu kupieckiego). 
+            PlatnoscKredytTermin Termin płatności odroczonej (termin płatności kredytu kupieckiego). 
+            PlatnoscPrzelewKwota Oznacza wartość płatną formą płatności "Zapłacono przelewem".  */
+
+
 
             case 'cash':
                 $Dok->PlatnoscGotowkaKwota = $amount;

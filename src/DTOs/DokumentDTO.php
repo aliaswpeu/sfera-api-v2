@@ -4,13 +4,13 @@ namespace Aliaswpeu\SferaApi\DTOs;
 
 class DokumentDTO
 {
-    /**
-     * @param PozycjaDTO[] $Pozycje
-     */
+
     public function __construct(
         public string $Typ,
         public ?int $KontrahentId = null,
-        public ?array $Kontrahent = null,
+        // public ?array $Kontrahent = null,
+        // public KontrahentDTO|array|null $Kontrahent = null,
+        public ?KontrahentDTO $Kontrahent = null,
 
         // Header
         public ?string $Tytul = null,
@@ -41,15 +41,19 @@ class DokumentDTO
         public ?int $MagazynNadawczyId = null,
         public ?int $KategoriaId = null,
         public ?int $PoziomCenyId = null,
-    ) {}
+    ) {
+    }
 
     public static function rules(): array
     {
+        // dd(self::prefixed('Kontrahent.', KontrahentDTO::rules()));
         return [
             'Typ' => ['required', 'string'],
 
             'KontrahentId' => ['nullable', 'integer'],
             'Kontrahent' => ['nullable', 'array'],
+            // Merge KontrahentDTO rules with prefix "Kontrahent."
+            ...self::prefixed('Kontrahent.', KontrahentDTO::rules()),
 
             'Tytul' => ['nullable', 'string', 'max:200'],
             'Uwagi' => ['nullable', 'string', 'max:2000'],
@@ -78,9 +82,24 @@ class DokumentDTO
             'PoziomCenyId' => ['nullable', 'integer'],
         ];
     }
+    private static function prefixed(string $prefix, array $rules): array
+    {
+        $prefixed = [];
+
+        foreach ($rules as $key => $value) {
+            $prefixed[$prefix . $key] = $value;
+        }
+
+        return $prefixed;
+    }
 
     public static function fromArray(array $data): self
     {
+
+        if (!empty($data['Kontrahent'])) {
+            $data['Kontrahent'] = KontrahentDTO::fromArray($data['Kontrahent']);
+        }
+
         // Convert Pozycje arrays → PozycjaDTO objects
         $pozycje = [];
         if (!empty($data['Pozycje'])) {

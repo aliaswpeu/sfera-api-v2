@@ -61,8 +61,8 @@ class KontrahentDTO
     public static function rules(): array
     {
         return [
-            'Symbol' => ['required', 'string', 'max:50'],
-            'Nazwa' => ['required', 'string', 'max:200'],
+            'Symbol' => ['required', 'string', 'max:20'],
+            'Nazwa' => ['required', 'string', 'max:50'],
             'NazwaPelna' => ['nullable', 'string', 'max:255'],
             'NIP' => ['nullable', 'string', 'max:20'],
             'REGON' => ['nullable', 'string', 'max:20'],
@@ -80,7 +80,7 @@ class KontrahentDTO
 
             // Delivery address
             'AdresDostawy' => ['nullable', 'array'],
-            'AdresDostawy.Nazwa' => ['nullable', 'string', 'max:200'],
+            'AdresDostawy.Nazwa' => ['nullable', 'string', 'max:50'],
             'AdresDostawy.Ulica' => ['nullable', 'string', 'max:100'],
             'AdresDostawy.NrDomu' => ['nullable', 'string', 'max:20'],
             'AdresDostawy.NrLokalu' => ['nullable', 'string', 'max:20'],

@@ -2,11 +2,13 @@
 
 namespace Aliaswpeu\SferaApi\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Illuminate\Routing\Controller;
 use Aliaswpeu\SferaApi\DTOs\DokumentDTO;
 use Aliaswpeu\SferaApi\DTOs\KontrahentDTO;
 use Aliaswpeu\SferaApi\Services\SubiektGTService;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class SubiektGTController extends Controller
 {
@@ -20,35 +22,41 @@ class SubiektGTController extends Controller
 
 
 
-    public function store(Request $request)
-    {
-        $validated = $request->validate(
-            KontrahentDTO::rules() + [
-                'instance' => ['required', 'in:NNTB,PE'],
-            ]
-        );
+    /*  public function store(Request $request)
+     {
+         $validated = $request->validate(
+             KontrahentDTO::rules() + [
+                 'instance' => ['required', 'in:NNTB,PE'],
+             ]
+         );
 
-        $instance = $validated['instance'];
-        unset($validated['instance']);
+         $instance = $validated['instance'];
+         unset($validated['instance']);
 
-        $dto = KontrahentDTO::fromArray($validated);
+         $dto = KontrahentDTO::fromArray($validated);
 
-        $service = new SubiektGTService($instance);
+         $service = new SubiektGTService($instance);
 
-        $data = $service->createKontrahent($dto);
+         $data = $service->createKontrahent($dto);
 
-        return response()->json($data);
-    }
+         return response()->json($data);
+     } */
 
     public function storeOrder(Request $request)
     {
+        // dd($request->expectsJson());
+        // dd(DokumentDTO::rules());
         // Validate request using DokumentDTO rules
+        // try {
         $validated = $request->validate(
             DokumentDTO::rules() + [
                 'instance' => ['required', 'in:NNTB,PE'],
             ]
         );
-
+        /*  } catch (Throwable $e) {
+             dd($e->getMessage());
+         } */
+        Log::info('in', $validated);
         $instance = $validated['instance'];
         unset($validated['instance']);
 
@@ -62,6 +70,7 @@ class SubiektGTController extends Controller
         $data = $service->createDokument($dto);
 
         return response()->json($data);
+
     }
 
     /**
